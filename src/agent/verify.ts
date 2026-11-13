@@ -28,12 +28,14 @@ export interface Verification {
 export function verifyReport(report: Report, ledger: readonly LedgerEntry[]): Verification {
   const checks = report.evidence.map((citation) => checkCitation(citation, ledger));
   const verified = checks.filter((check) => check.ok).length;
+  const okRefs = new Set(ledger.filter((entry) => entry.status === "ok").map((entry) => entry.ref));
+  const verifiedData = checks.some((check) => check.ok && okRefs.has(check.ref.trim().toUpperCase()));
   return {
     checks,
     verified,
     total: checks.length,
     allVerified: verified === checks.length,
-    supported: NO_EVIDENCE_NEEDED.includes(report.root_cause) || verified > 0,
+    supported: NO_EVIDENCE_NEEDED.includes(report.root_cause) || verifiedData,
   };
 }
 
@@ -41,12 +43,12 @@ function checkCitation(citation: Report["evidence"][number], ledger: readonly Le
   const ref = citation.ref.trim().toUpperCase();
   const entry = ledger.find((candidate) => candidate.ref === ref);
   if (!entry) return { ...citation, ok: false, reason: `no tool result ${citation.ref}` };
-  if (entry.status !== "ok" || !entry.fields) {
-    return { ...citation, ok: false, reason: `${ref} returned ${entry.status}, not data` };
-  }
   const field = citation.field.trim();
-  if (!Object.hasOwn(entry.fields, field)) return { ...citation, ok: false, reason: `${ref} has no field "${field}"` };
-  const actual = entry.fields[field] ?? null;
+  // A failed call still returned facts: its status and error, exactly as the model saw them.
+  const fields = entry.status === "ok" ? entry.fields : { status: entry.status, error: entry.error ?? null };
+  if (!fields) return { ...citation, ok: false, reason: `${ref} returned no data` };
+  if (!Object.hasOwn(fields, field)) return { ...citation, ok: false, reason: `${ref} has no field "${field}"` };
+  const actual = fields[field] ?? null;
   const ok = normalize(actual) === normalize(citation.value);
   return ok ? { ...citation, ok, actual } : { ...citation, ok, actual, reason: `${ref}.${field} is ${JSON.stringify(actual)}` };
 }

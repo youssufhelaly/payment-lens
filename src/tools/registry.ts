@@ -138,6 +138,7 @@ export interface ToolRunnerOptions {
 export class ToolRunner {
   readonly ledger: LedgerEntry[] = [];
   private readonly scope: ReadonlySet<string> | null;
+  private refCount = 0;
 
   constructor(
     private readonly reader: StripeReader,
@@ -154,7 +155,8 @@ export class ToolRunner {
   }
 
   async call(name: string, args: unknown): Promise<LedgerEntry> {
-    const ref = `E${this.ledger.length + 1}`;
+    // Reserved before the await: some providers run tool calls concurrently.
+    const ref = `E${++this.refCount}`;
     const entry = await this.execute(ref, name, args);
     this.ledger.push(entry);
     return entry;

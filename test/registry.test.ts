@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { verifyReport } from "../src/agent/verify";
 import { renderForModel, ToolRunner } from "../src/tools/registry";
 import { ACME, fakeReader, GLOBEX } from "./fakes";
 
@@ -10,6 +11,35 @@ describe("ToolRunner", () => {
     expect(first).toMatchObject({ ref: "E1", status: "ok" });
     expect(first.fields?.["last_payment_error.decline_code"]).toBe("insufficient_funds");
     expect(second.fields?.["outcome.network_status"]).toBe("declined_by_network");
+  });
+
+  it("gives concurrent calls distinct evidence refs", async () => {
+    const runner = new ToolRunner(fakeReader());
+    const entries = await Promise.all([
+      runner.call("get_payment_intent", { payment_intent_id: "pi_declined1" }),
+      runner.call("get_charge", { charge_id: "ch_declined1" }),
+      runner.call("get_payment_intent", { payment_intent_id: "pi_declined1" }),
+    ]);
+    expect(entries.map((entry) => entry.ref)).toEqual(["E1", "E2", "E3"]);
+  });
+
+  it("lets a failed call be cited only for its status and error", async () => {
+    const runner = new ToolRunner(fakeReader(), { allowedCustomers: [ACME] });
+    await runner.call("get_payment_intent", { payment_intent_id: "pi_globex1" });
+    const report = {
+      evidence: [
+        { ref: "E1", field: "status", value: "denied" },
+        { ref: "E1", field: "outcome.type", value: "blocked" },
+      ],
+      unknowns: [],
+      root_cause: "radar_blocked" as const,
+      certainty: "confirmed" as const,
+      answer: "Blocked.",
+      next_steps: [],
+    };
+    const verification = verifyReport(report, runner.ledger);
+    expect(verification.checks.map((check) => check.ok)).toEqual([true, false]);
+    expect(verification.supported).toBe(false);
   });
 
   it("blocks tools that do not exist without touching Stripe", async () => {
